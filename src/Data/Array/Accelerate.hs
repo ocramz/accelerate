@@ -1,3 +1,6 @@
+{-# LANGUAGE PatternSynonyms     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
 -- |
 -- Module      : Data.Array.Accelerate
 -- Copyright   : [2008..2017] Manuel M T Chakravarty, Gabriele Keller
@@ -328,6 +331,14 @@ module Data.Array.Accelerate (
   lift1, lift2, lift3,
   ilift1, ilift2, ilift3,
 
+  -- ** Pattern synonyms
+  -- $pattern_synonyms
+  --
+  pattern Pattern, IsTuple, IsAtuple,
+  pattern T2,  pattern T3,  pattern T4,  pattern T5,  pattern T6,
+  pattern T7,  pattern T8,  pattern T9,  pattern T10, pattern T11,
+  pattern T12, pattern T13, pattern T14, pattern T15, pattern T16,
+
   -- ** Scalar operations
   -- *** Introduction
   constant,
@@ -378,8 +389,9 @@ module Data.Array.Accelerate (
   fromList, toList,
 
   -- ---------------------------------------------------------------------------
-  -- * Prelude re-exports
+  -- * Useful re-exports
   (.), ($), error, undefined, const,
+  Generic,
 
   -- ---------------------------------------------------------------------------
   -- Types
@@ -392,7 +404,7 @@ module Data.Array.Accelerate (
   CShort, CUShort, CInt, CUInt, CLong, CULong, CLLong, CULLong,
   CChar, CSChar, CUChar,
 
-  -- | Avoid using these in your own functions wherever possible.
+  -- Avoid using these in your own functions wherever possible.
   IsScalar, IsNum, IsBounded, IsIntegral, IsFloating, IsNonNum,
 
 ) where
@@ -401,12 +413,14 @@ module Data.Array.Accelerate (
 import Data.Array.Accelerate.Array.Sugar                            hiding ( (!), (!!), rank, shape, reshape, size, toIndex, fromIndex, intersect, ignore )
 import Data.Array.Accelerate.Classes
 import Data.Array.Accelerate.Language
+import Data.Array.Accelerate.Pattern
 import Data.Array.Accelerate.Prelude
 import Data.Array.Accelerate.Trafo                                  () -- show instances
 import Data.Array.Accelerate.Type
 import qualified Data.Array.Accelerate.Array.Sugar                  as S
 
 import Prelude                                                      ( (.), ($), undefined, error, const )
+import GHC.Generics                                                 ( Generic )
 
 -- $setup
 -- >>> :seti -XTypeOperators
@@ -425,33 +439,39 @@ import Prelude                                                      ( (.), ($), 
 
 -- | Array indexing in plain Haskell code.
 --
-indexArray :: Array sh e -> sh -> e
+{-# INLINE indexArray #-}
+indexArray :: (Shape sh, Elt e) => Array sh e -> sh -> e
 indexArray = (S.!)
 
 -- | Linear array indexing in plain Haskell code.
 --
-linearIndexArray :: Array sh e -> Int -> e
+{-# INLINE linearIndexArray #-}
+linearIndexArray :: Elt e => Array sh e -> Int -> e
 linearIndexArray = (S.!!)
 
--- | Rank of an array.
+-- | Rank of an array (as a plain Haskell value)
 --
-arrayRank :: Shape sh => sh -> Int
-arrayRank = S.rank
+{-# INLINE arrayRank #-}
+arrayRank :: forall sh e. Shape sh => Array sh e -> Int
+arrayRank _ = S.rank @sh
 
--- |Array shape in plain Haskell code.
+-- | Shape of an array (as a plain Haskell value)
 --
+{-# INLINE arrayShape #-}
 arrayShape :: Shape sh => Array sh e -> sh
 arrayShape = S.shape
 -- rename as 'shape' is already used by the EDSL to query an array's shape
 
--- | Total number of elements in an array of the given 'Shape'.
+-- | Total number of elements in an array (as a plain Haskell value)
 --
-arraySize :: Shape sh => sh -> Int
-arraySize = S.size
+{-# INLINE arraySize #-}
+arraySize :: Shape sh => Array sh e -> Int
+arraySize = S.size . S.shape
 
 -- | Change the shape of an array without altering its contents. The 'arraySize'
 -- of the source and result arrays must be identical.
 --
+{-# INLINE arrayReshape #-}
 arrayReshape :: (Shape sh, Shape sh', Elt e) => sh -> Array sh' e -> Array sh e
 arrayReshape = S.reshape
 
@@ -549,6 +569,62 @@ arrayReshape = S.reshape
 -- > fst :: forall a b. (Elt a, Elt b) => Exp (a,b) -> Exp a
 -- > fst t = let (x,y) = unlift t  :: (Exp a, Exp b)
 -- >         in x
+--
+-- For an alternative, see section <#pattern_synonyms Pattern synonyms>.
+--
+
+-- $pattern_synonyms
+-- #pattern_synonyms#
+--
+-- Pattern synonyms can be used as an alternative to 'lift' and 'unlift' for
+-- constructing and accessing data types isomorphic to simple product (tuple)
+-- types.
+--
+-- In contrast to 'lift' and 'unlift' however, pattern synonyms do /not/ require
+-- these data types to be fully polymorphic.
+--
+-- For example, let's say we have regular Haskell data type representing a point
+-- in two-dimensional space:
+--
+-- > data Point = Point_ Float Float
+-- >   deriving (Show, Generic, Elt, IsTuple)
+--
+-- Here we derive instances for both the 'Elt' class, so that this data type can
+-- be used within Accelerate scalar expressions, and the 'IsTuple' class, as
+-- this is a product type (contains multiple values).
+--
+-- In order to access the individual fields of the data constructor from within
+-- an Accelerate expression, we define the following pattern synonym:
+--
+-- > pattern Point :: Exp Float -> Exp Float -> Exp Point
+-- > pattern Point x y = Pattern (x,y)
+--
+-- Notice how we named the constructor of our original datatype with a trailing
+-- underscore, so that we can use the undecorated name for the pattern synonym;
+-- these must have unique names.
+--
+-- In essence, the 'Pattern' pattern is really telling GHC how to treat our @Point@
+-- type as a regular pair for use in Accelerate code. The pattern can then be
+-- used on both the left and right hand side of an expression:
+--
+-- > addPoint :: Exp Point -> Exp Point -> Exp Point
+-- > addPoint (Point x1 y1) (Point x2 y2) = Point (x1+x2) (y1+y2)
+--
+-- Similarly, we can define pattern synonyms for values in 'Acc'. We can also
+-- use record syntax to generate field accessors, if we desire:
+--
+-- > data SparseVector a = SparseVector_ (Vector Int) (Vector a)
+-- >   deriving (Show, Generic, Arrays, IsAtuple)
+-- >
+-- > pattern SparseVector :: Elt a => Acc (Vector Int) -> Acc (Vector a) -> Acc (SparseVector a)
+-- > pattern SparseVector { indices, values } = Pattern (indices, values)
+--
+-- For convenience, we have defined several pattern synonyms for regular tuples,
+-- 'T2' (for pairs), 'T3' (for triples), and so on up to 'T16'. These are
+-- occasionally more convenient to use than 'lift' and 'unlift' together with
+-- the regular tuple syntax.
+--
+-- @since 1.3.0.0
 --
 
 -- $getting_data_in

@@ -6,6 +6,7 @@
 {-# LANGUAGE PatternGuards       #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeOperators       #-}
 -- |
 -- Module      : Data.Array.Accelerate.Test.NoFib.Prelude.Stencil
@@ -23,7 +24,6 @@ module Data.Array.Accelerate.Test.NoFib.Prelude.Stencil (
 
 ) where
 
-import Data.Proxy
 import Data.Typeable
 import Prelude                                                      as P
 
@@ -46,17 +46,17 @@ import Test.Tasty.Hedgehog
 test_stencil :: RunN -> TestTree
 test_stencil runN =
   testGroup "stencil"
-    [ at (Proxy::Proxy TestInt8)   $ testElt i8
-    , at (Proxy::Proxy TestInt16)  $ testElt i16
-    , at (Proxy::Proxy TestInt32)  $ testElt i32
-    , at (Proxy::Proxy TestInt64)  $ testElt i64
-    , at (Proxy::Proxy TestWord8)  $ testElt w8
-    , at (Proxy::Proxy TestWord16) $ testElt w16
-    , at (Proxy::Proxy TestWord32) $ testElt w32
-    , at (Proxy::Proxy TestWord64) $ testElt w64
-    , at (Proxy::Proxy TestHalf)   $ testElt f16
-    , at (Proxy::Proxy TestFloat)  $ testElt f32
-    , at (Proxy::Proxy TestDouble) $ testElt f64
+    [ at @TestInt8   $ testElt i8
+    , at @TestInt16  $ testElt i16
+    , at @TestInt32  $ testElt i32
+    , at @TestInt64  $ testElt i64
+    , at @TestWord8  $ testElt w8
+    , at @TestWord16 $ testElt w16
+    , at @TestWord32 $ testElt w32
+    , at @TestWord64 $ testElt w64
+    , at @TestHalf   $ testElt f16
+    , at @TestFloat  $ testElt f32
+    , at @TestDouble $ testElt f64
     ]
   where
     testElt
@@ -302,10 +302,7 @@ data SimpleBoundary e
   | Constant e
   deriving (P.Eq, Show)
 
-boundary
-    :: Elt e
-    => Gen e
-    -> Gen (SimpleBoundary e)
+boundary :: Gen e -> Gen (SimpleBoundary e)
 boundary e =
   Gen.choice
     [ Constant <$> e
@@ -413,9 +410,9 @@ pattern9x9 = do
   P9 i5 a5 r5 <- pattern9
   P9 i6 a6 r6 <- pattern9
   P9 i7 a7 r7 <- pattern9
-  P9 i8 a8 r8 <- pattern9
+  P9 j8 a8 r8 <- pattern9
   return $
-    P9x9 [i0,i1,i2,i3,i4,i5,i6,i7,i8]
+    P9x9 [i0,i1,i2,i3,i4,i5,i6,i7,j8]
          (\(x0,x1,x2,x3,x4,x5,x6,x7,x8) -> P.sum [a0 x0, a1 x1, a2 x2, a3 x3, a4 x4, a5 x5, a6 x6, a7 x7, a8 x8])
          (\(x0,x1,x2,x3,x4,x5,x6,x7,x8) -> P.sum [r0 x0, r1 x1, r2 x2, r3 x3, r4 x4, r5 x5, r6 x6, r7 x7, r8 x8])
 
@@ -628,7 +625,7 @@ stencil3x3x3Ref st bnd arr =
 
 bound :: forall sh e. Shape sh => SimpleBoundary e -> sh -> sh -> Either e sh
 bound bnd sh0 ix0 =
-  case go (eltType sh0) (fromElt sh0) (fromElt ix0) of
+  case go (eltType @sh) (fromElt sh0) (fromElt ix0) of
     Left e    -> Left e
     Right ix' -> Right (toElt ix')
   where

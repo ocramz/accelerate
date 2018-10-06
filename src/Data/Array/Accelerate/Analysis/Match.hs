@@ -1,7 +1,10 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE PatternGuards       #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeOperators       #-}
 {-# OPTIONS_HADDOCK hide #-}
 -- |
@@ -26,7 +29,7 @@ module Data.Array.Accelerate.Analysis.Match (
   matchPrimFun,  matchPrimFun',
 
   -- auxiliary
-  matchIdx, matchTupleType,
+  matchIdx, matchTupleType, matchShapeType,
   matchIntegralType, matchFloatingType, matchNumType, matchScalarType,
 
 ) where
@@ -34,15 +37,16 @@ module Data.Array.Accelerate.Analysis.Match (
 -- standard library
 import Data.Maybe
 import Data.Typeable
+import Unsafe.Coerce                                    ( unsafeCoerce )
 import System.IO.Unsafe                                 ( unsafePerformIO )
 import System.Mem.StableName
 import Prelude                                          hiding ( exp )
 
 -- friends
-import Data.Array.Accelerate.AST
 import Data.Array.Accelerate.Analysis.Hash
 import Data.Array.Accelerate.Array.Representation       ( SliceIndex(..) )
 import Data.Array.Accelerate.Array.Sugar
+import Data.Array.Accelerate.AST
 import Data.Array.Accelerate.Product
 import Data.Array.Accelerate.Type
 
@@ -65,12 +69,15 @@ matchPreOpenAcc
     -> Maybe (s :~: t)
 matchPreOpenAcc matchAcc encodeAcc = match
   where
+    {-# INLINEABLE matchFun #-}
     matchFun :: PreOpenFun acc env' aenv' u -> PreOpenFun acc env' aenv' v -> Maybe (u :~: v)
     matchFun = matchPreOpenFun matchAcc encodeAcc
 
+    {-# INLINEABLE matchExp #-}
     matchExp :: PreOpenExp acc env' aenv' u -> PreOpenExp acc env' aenv' v -> Maybe (u :~: v)
     matchExp = matchPreOpenExp matchAcc encodeAcc
 
+    {-# INLINEABLE match #-}
     match :: PreOpenAcc acc aenv s -> PreOpenAcc acc aenv t -> Maybe (s :~: t)
     match (Alet x1 a1) (Alet x2 a2)
       | Just Refl <- matchAcc x1 x2
@@ -115,7 +122,7 @@ matchPreOpenAcc matchAcc encodeAcc = match
       = Just Refl
 
     match (Use a1) (Use a2)
-      | Just Refl <- matchArrays (arrays (undefined::s)) (arrays (undefined::t)) a1 a2
+      | Just Refl <- matchArrays (arrays @s) (arrays @t) a1 a2
       = gcast Refl
 
     match (Unit e1) (Unit e2)
@@ -303,7 +310,7 @@ matchBoundary
 matchBoundary _ _ Clamp        Clamp        = True
 matchBoundary _ _ Mirror       Mirror       = True
 matchBoundary _ _ Wrap         Wrap         = True
-matchBoundary _ _ (Constant s) (Constant t) = matchConst (eltType (undefined::t)) s t
+matchBoundary _ _ (Constant s) (Constant t) = matchConst (eltType @t) s t
 matchBoundary m h (Function f) (Function g)
   | Just Refl <- matchPreOpenFun m h f g
   = True
@@ -435,6 +442,7 @@ matchPreOpenExp
     -> Maybe (s :~: t)
 matchPreOpenExp matchAcc encodeAcc = match
   where
+    {-# INLINEABLE match #-}
     match :: forall env' aenv' s' t'.
              PreOpenExp acc env' aenv' s'
           -> PreOpenExp acc env' aenv' t'
@@ -456,16 +464,16 @@ matchPreOpenExp matchAcc encodeAcc = match
       = gcast Refl
 
     match (Const c1) (Const c2)
-      | Just Refl <- matchTupleType (eltType (undefined::s')) (eltType (undefined::t'))
-      , matchConst (eltType (undefined::s')) c1 c2
+      | Just Refl <- matchTupleType (eltType @s') (eltType @t')
+      , matchConst (eltType @s') c1 c2
       = gcast Refl  -- surface/representation type
 
     match Undef Undef
-      | Just Refl <- matchTupleType (eltType (undefined::s')) (eltType (undefined::t'))
+      | Just Refl <- matchTupleType (eltType @s') (eltType @t')
       = gcast Refl
 
     match (Coerce e1) (Coerce e2)
-      | Just Refl <- matchTupleType (eltType (undefined::s')) (eltType (undefined::t'))
+      | Just Refl <- matchTupleType (eltType @s') (eltType @t')
       , Just Refl <- match e1 e2
       = gcast Refl
 
@@ -614,19 +622,7 @@ evalEqSingle (NumSingleType t)                                  = evalEqNum t
 evalEqSingle (NonNumSingleType t) | NonNumDict <- nonNumDict t  = uncurry (==)
 
 evalEqVector :: VectorType a -> (a, a) -> Bool
-evalEqVector (Vector2Type t) (V2 a1 b1, V2 a2 b2)             = evalEqSingle t (a1,a2) && evalEqSingle t (b1,b2)
-evalEqVector (Vector3Type t) (V3 a1 b1 c1, V3 a2 b2 c2)       = evalEqSingle t (a1,a2) && evalEqSingle t (b1,b2) && evalEqSingle t (c1,c2)
-evalEqVector (Vector4Type t) (V4 a1 b1 c1 d1, V4 a2 b2 c2 d2) = evalEqSingle t (a1,a2) && evalEqSingle t (b1,b2) && evalEqSingle t (c1,c2) && evalEqSingle t (d1,d2)
-evalEqVector (Vector8Type t) ( V8 a1 b1 c1 d1 e1 f1 g1 h1
-                             , V8 a2 b2 c2 d2 e2 f2 g2 h2 ) =
-  evalEqSingle t (a1,a2) && evalEqSingle t (b1,b2) && evalEqSingle t (c1,c2) && evalEqSingle t (d1,d2) &&
-  evalEqSingle t (e1,e2) && evalEqSingle t (f1,f2) && evalEqSingle t (g1,g2) && evalEqSingle t (h1,h2)
-evalEqVector (Vector16Type t) ( V16 a1 b1 c1 d1 e1 f1 g1 h1 i1 j1 k1 l1 m1 n1 o1 p1
-                              , V16 a2 b2 c2 d2 e2 f2 g2 h2 i2 j2 k2 l2 m2 n2 o2 p2 ) =
-  evalEqSingle t (a1,a2) && evalEqSingle t (b1,b2) && evalEqSingle t (c1,c2) && evalEqSingle t (d1,d2) &&
-  evalEqSingle t (e1,e2) && evalEqSingle t (f1,f2) && evalEqSingle t (g1,g2) && evalEqSingle t (h1,h2) &&
-  evalEqSingle t (i1,i2) && evalEqSingle t (j1,j2) && evalEqSingle t (k1,k2) && evalEqSingle t (l1,l2) &&
-  evalEqSingle t (m1,m2) && evalEqSingle t (n1,n2) && evalEqSingle t (o1,o2) && evalEqSingle t (p1,p2)
+evalEqVector VectorType{} = uncurry (==)
 
 evalEqNum :: NumType a -> (a, a) -> Bool
 evalEqNum (IntegralNumType t) | IntegralDict <- integralDict t  = uncurry (==)
@@ -889,7 +885,7 @@ matchPrimFun' _ _
 
 -- Match reified types
 --
-{-# INLINEABLE matchTupleType #-}
+{-# INLINE matchTupleType #-}
 matchTupleType :: TupleType s -> TupleType t -> Maybe (s :~: t)
 matchTupleType TypeRunit         TypeRunit         = Just Refl
 matchTupleType (TypeRscalar s)   (TypeRscalar t)   = matchScalarType s t
@@ -902,91 +898,90 @@ matchTupleType _ _
   = Nothing
 
 
+-- Match shapes (dimensionality)
+--
+-- XXX: Matching shapes is sort of a special case because the representation
+-- types really are isomorphic to the surface type. However, 'gcast' does not
+-- inline here, meaning that it will always do the fingerprint check, even if
+-- the dimensions are known statically and thus the check could be elided as
+-- a known branch.
+--
+{-# INLINE matchShapeType #-}
+matchShapeType :: forall s t. (Shape s, Shape t) => Maybe (s :~: t)
+matchShapeType
+  | Just Refl <- matchTupleType (eltType @s) (eltType @t)
+#ifdef ACCELERATE_INTERNAL_CHECKS
+  = gcast Refl
+#else
+  = Just (unsafeCoerce Refl)
+#endif
+  | otherwise
+  = Nothing
+
+
 -- Match reified type dictionaries
 --
-{-# INLINEABLE matchScalarType #-}
+{-# INLINE matchScalarType #-}
 matchScalarType :: ScalarType s -> ScalarType t -> Maybe (s :~: t)
 matchScalarType (SingleScalarType s) (SingleScalarType t) = matchSingleType s t
 matchScalarType (VectorScalarType s) (VectorScalarType t) = matchVectorType s t
 matchScalarType _                    _                    = Nothing
 
-{-# INLINEABLE matchSingleType #-}
+{-# INLINE matchSingleType #-}
 matchSingleType :: SingleType s -> SingleType t -> Maybe (s :~: t)
 matchSingleType (NumSingleType s)    (NumSingleType t)    = matchNumType s t
 matchSingleType (NonNumSingleType s) (NonNumSingleType t) = matchNonNumType s t
 matchSingleType _                    _                    = Nothing
 
-{-# INLINEABLE matchVectorType #-}
-matchVectorType :: VectorType s -> VectorType t -> Maybe (s :~: t)
-matchVectorType (Vector2Type s) (Vector2Type t)
-  | Just Refl <- matchSingleType s t
-  = Just Refl
-matchVectorType (Vector3Type s) (Vector3Type t)
-  | Just Refl <- matchSingleType s t
-  = Just Refl
-matchVectorType (Vector4Type s) (Vector4Type t)
-  | Just Refl <- matchSingleType s t
-  = Just Refl
-matchVectorType (Vector8Type s) (Vector8Type t)
-  | Just Refl <- matchSingleType s t
-  = Just Refl
-matchVectorType (Vector16Type s) (Vector16Type t)
-  | Just Refl <- matchSingleType s t
+{-# INLINE matchVectorType #-}
+matchVectorType :: forall m n s t. VectorType (Vec n s) -> VectorType (Vec m t) -> Maybe (Vec n s :~: Vec m t)
+matchVectorType (VectorType n s) (VectorType m t)
+  | Just Refl <- if n == m
+                   then Just (unsafeCoerce Refl :: n :~: m) -- XXX: we don't have an embedded KnownNat constraint, but
+                   else Nothing                             -- this implementation is the same as 'GHC.TypeLits.sameNat'
+  , Just Refl <- matchSingleType s t
   = Just Refl
 matchVectorType _ _
   = Nothing
 
-{-# INLINEABLE matchNumType #-}
+{-# INLINE matchNumType #-}
 matchNumType :: NumType s -> NumType t -> Maybe (s :~: t)
 matchNumType (IntegralNumType s) (IntegralNumType t) = matchIntegralType s t
 matchNumType (FloatingNumType s) (FloatingNumType t) = matchFloatingType s t
 matchNumType _                   _                   = Nothing
 
-{-# INLINEABLE matchBoundedType #-}
+{-# INLINE matchBoundedType #-}
 matchBoundedType :: BoundedType s -> BoundedType t -> Maybe (s :~: t)
 matchBoundedType (IntegralBoundedType s) (IntegralBoundedType t) = matchIntegralType s t
 matchBoundedType (NonNumBoundedType s)   (NonNumBoundedType t)   = matchNonNumType s t
 matchBoundedType _                       _                       = Nothing
 
-{-# INLINEABLE matchIntegralType #-}
+{-# INLINE matchIntegralType #-}
 matchIntegralType :: IntegralType s -> IntegralType t -> Maybe (s :~: t)
-matchIntegralType TypeInt{}     TypeInt{}     = Just Refl
-matchIntegralType TypeInt8{}    TypeInt8{}    = Just Refl
-matchIntegralType TypeInt16{}   TypeInt16{}   = Just Refl
-matchIntegralType TypeInt32{}   TypeInt32{}   = Just Refl
-matchIntegralType TypeInt64{}   TypeInt64{}   = Just Refl
-matchIntegralType TypeWord{}    TypeWord{}    = Just Refl
-matchIntegralType TypeWord8{}   TypeWord8{}   = Just Refl
-matchIntegralType TypeWord16{}  TypeWord16{}  = Just Refl
-matchIntegralType TypeWord32{}  TypeWord32{}  = Just Refl
-matchIntegralType TypeWord64{}  TypeWord64{}  = Just Refl
-matchIntegralType TypeCShort{}  TypeCShort{}  = Just Refl
-matchIntegralType TypeCUShort{} TypeCUShort{} = Just Refl
-matchIntegralType TypeCInt{}    TypeCInt{}    = Just Refl
-matchIntegralType TypeCUInt{}   TypeCUInt{}   = Just Refl
-matchIntegralType TypeCLong{}   TypeCLong{}   = Just Refl
-matchIntegralType TypeCULong{}  TypeCULong{}  = Just Refl
-matchIntegralType TypeCLLong{}  TypeCLLong{}  = Just Refl
-matchIntegralType TypeCULLong{} TypeCULLong{} = Just Refl
-matchIntegralType _             _             = Nothing
+matchIntegralType TypeInt{}    TypeInt{}    = Just Refl
+matchIntegralType TypeInt8{}   TypeInt8{}   = Just Refl
+matchIntegralType TypeInt16{}  TypeInt16{}  = Just Refl
+matchIntegralType TypeInt32{}  TypeInt32{}  = Just Refl
+matchIntegralType TypeInt64{}  TypeInt64{}  = Just Refl
+matchIntegralType TypeWord{}   TypeWord{}   = Just Refl
+matchIntegralType TypeWord8{}  TypeWord8{}  = Just Refl
+matchIntegralType TypeWord16{} TypeWord16{} = Just Refl
+matchIntegralType TypeWord32{} TypeWord32{} = Just Refl
+matchIntegralType TypeWord64{} TypeWord64{} = Just Refl
+matchIntegralType _            _            = Nothing
 
-{-# INLINEABLE matchFloatingType #-}
+{-# INLINE matchFloatingType #-}
 matchFloatingType :: FloatingType s -> FloatingType t -> Maybe (s :~: t)
-matchFloatingType TypeHalf{}    TypeHalf{}    = Just Refl
-matchFloatingType TypeFloat{}   TypeFloat{}   = Just Refl
-matchFloatingType TypeDouble{}  TypeDouble{}  = Just Refl
-matchFloatingType TypeCFloat{}  TypeCFloat{}  = Just Refl
-matchFloatingType TypeCDouble{} TypeCDouble{} = Just Refl
-matchFloatingType _             _             = Nothing
+matchFloatingType TypeHalf{}   TypeHalf{}   = Just Refl
+matchFloatingType TypeFloat{}  TypeFloat{}  = Just Refl
+matchFloatingType TypeDouble{} TypeDouble{} = Just Refl
+matchFloatingType _            _            = Nothing
 
-{-# INLINEABLE matchNonNumType #-}
+{-# INLINE matchNonNumType #-}
 matchNonNumType :: NonNumType s -> NonNumType t -> Maybe (s :~: t)
-matchNonNumType TypeBool{}   TypeBool{}   = Just Refl
-matchNonNumType TypeChar{}   TypeChar{}   = Just Refl
-matchNonNumType TypeCChar{}  TypeCChar{}  = Just Refl
-matchNonNumType TypeCSChar{} TypeCSChar{} = Just Refl
-matchNonNumType TypeCUChar{} TypeCUChar{} = Just Refl
-matchNonNumType _            _            = Nothing
+matchNonNumType TypeBool{} TypeBool{} = Just Refl
+matchNonNumType TypeChar{} TypeChar{} = Just Refl
+matchNonNumType _          _          = Nothing
 
 
 -- Auxiliary

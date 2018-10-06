@@ -5,6 +5,7 @@
 {-# LANGUAGE MonoLocalBinds      #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeOperators       #-}
 -- |
 -- Module      : Data.Array.Accelerate.Test.NoFib.Prelude.Map
@@ -22,7 +23,6 @@ module Data.Array.Accelerate.Test.NoFib.Prelude.Map (
 
 ) where
 
-import Data.Proxy
 import Data.Bits                                                    as P
 import Data.Typeable
 import Prelude                                                      as P
@@ -45,17 +45,17 @@ import Test.Tasty.Hedgehog
 test_map :: RunN -> TestTree
 test_map runN =
   testGroup "map"
-    [ at (Proxy::Proxy TestInt8)   $ testIntegralElt i8
-    , at (Proxy::Proxy TestInt16)  $ testIntegralElt i16
-    , at (Proxy::Proxy TestInt32)  $ testIntegralElt i32
-    , at (Proxy::Proxy TestInt64)  $ testIntegralElt i64
-    , at (Proxy::Proxy TestWord8)  $ testIntegralElt w8
-    , at (Proxy::Proxy TestWord16) $ testIntegralElt w16
-    , at (Proxy::Proxy TestWord32) $ testIntegralElt w32
-    , at (Proxy::Proxy TestWord64) $ testIntegralElt w64
-    , at (Proxy::Proxy TestHalf)   $ testFloatingElt (Gen.realFloat :: Range Half -> Gen Half)
-    , at (Proxy::Proxy TestFloat)  $ testFloatingElt Gen.float
-    , at (Proxy::Proxy TestDouble) $ testFloatingElt Gen.double
+    [ at @TestInt8   $ testIntegralElt i8
+    , at @TestInt16  $ testIntegralElt i16
+    , at @TestInt32  $ testIntegralElt i32
+    , at @TestInt64  $ testIntegralElt i64
+    , at @TestWord8  $ testIntegralElt w8
+    , at @TestWord16 $ testIntegralElt w16
+    , at @TestWord32 $ testIntegralElt w32
+    , at @TestWord64 $ testIntegralElt w64
+    , at @TestHalf   $ testFloatingElt (Gen.realFloat :: Range Half -> Gen Half)
+    , at @TestFloat  $ testFloatingElt Gen.float
+    , at @TestDouble $ testFloatingElt Gen.double
     ]
   where
     testIntegralElt
@@ -76,7 +76,7 @@ test_map runN =
             => Gen sh
             -> TestTree
         testDim sh =
-          testGroup ("DIM" P.++ show (rank (undefined::sh)))
+          testGroup ("DIM" P.++ show (rank @sh))
             [ -- operators on Num
               testProperty "neg"                $ test_negate runN sh e
             , testProperty "abs"                $ test_abs runN sh e
@@ -108,7 +108,7 @@ test_map runN =
             => Gen sh
             -> TestTree
         testDim sh =
-          testGroup ("DIM" P.++ show (rank (undefined::sh)))
+          testGroup ("DIM" P.++ show (rank @sh))
             [ -- operators on Num
               testProperty "neg"        $ test_negate runN sh (fullrange e)
             , testProperty "abs"        $ test_abs runN sh (fullrange e)
@@ -193,7 +193,7 @@ test_complement runN dim e =
     let !go = runN (A.map A.complement) in go xs ~~~ mapRef P.complement xs
 
 test_popCount
-    :: (Shape sh, Similar e, A.Bits e, P.Bits e, P.Eq sh)
+    :: (Shape sh, A.Bits e, P.Bits e, P.Eq sh)
     => RunN
     -> Gen sh
     -> Gen e
@@ -205,7 +205,7 @@ test_popCount runN dim e =
     let !go = runN (A.map A.popCount) in go xs ~~~ mapRef P.popCount xs
 
 test_countLeadingZeros
-    :: (Shape sh, Similar e, A.FiniteBits e, P.FiniteBits e, P.Eq sh)
+    :: (Shape sh, A.FiniteBits e, P.FiniteBits e, P.Eq sh)
     => RunN
     -> Gen sh
     -> Gen e
@@ -217,7 +217,7 @@ test_countLeadingZeros runN dim e =
     let !go = runN (A.map A.countLeadingZeros) in go xs ~~~ mapRef countLeadingZerosRef xs
 
 test_countTrailingZeros
-    :: (Shape sh, Similar e, A.FiniteBits e, P.FiniteBits e, P.Eq sh)
+    :: (Shape sh, A.FiniteBits e, P.FiniteBits e, P.Eq sh)
     => RunN
     -> Gen sh
     -> Gen e
@@ -229,7 +229,7 @@ test_countTrailingZeros runN dim e =
     let !go = runN (A.map A.countTrailingZeros) in go xs ~~~ mapRef countTrailingZerosRef xs
 
 test_fromIntegral
-    :: forall sh e. (Shape sh, Similar e, P.Eq sh, P.Integral e, A.Integral e, A.FromIntegral e Double)
+    :: forall sh e. (Shape sh, P.Eq sh, P.Integral e, A.Integral e, A.FromIntegral e Double)
     => RunN
     -> Gen sh
     -> Gen e
@@ -397,7 +397,7 @@ test_log runN dim e =
     let !go = runN (A.map log) in go xs ~~~ mapRef log xs
 
 test_truncate
-    :: forall sh e. (Shape sh, Similar e, P.Eq sh, P.RealFrac e, A.RealFrac e)
+    :: forall sh e. (Shape sh, P.Eq sh, P.RealFrac e, A.RealFrac e)
     => RunN
     -> Gen sh
     -> Gen e
@@ -409,7 +409,7 @@ test_truncate runN dim e =
     let !go = runN (A.map A.truncate) in go xs ~~~ mapRef (P.truncate :: e -> Int) xs
 
 test_round
-    :: forall sh e. (Shape sh, Similar e, P.Eq sh, P.RealFrac e, A.RealFrac e)
+    :: forall sh e. (Shape sh, P.Eq sh, P.RealFrac e, A.RealFrac e)
     => RunN
     -> Gen sh
     -> Gen e
@@ -421,7 +421,7 @@ test_round runN dim e =
     let !go = runN (A.map A.round) in go xs ~~~ mapRef (P.round :: e -> Int) xs
 
 test_floor
-    :: forall sh e. (Shape sh, Similar e, P.Eq sh, P.RealFrac e, A.RealFrac e)
+    :: forall sh e. (Shape sh, P.Eq sh, P.RealFrac e, A.RealFrac e)
     => RunN
     -> Gen sh
     -> Gen e
@@ -433,7 +433,7 @@ test_floor runN dim e =
     let !go = runN (A.map A.floor) in go xs ~~~ mapRef (P.floor :: e -> Int) xs
 
 test_ceiling
-    :: forall sh e. (Shape sh, Similar e, P.Eq sh, P.RealFrac e, A.RealFrac e)
+    :: forall sh e. (Shape sh, P.Eq sh, P.RealFrac e, A.RealFrac e)
     => RunN
     -> Gen sh
     -> Gen e
@@ -448,7 +448,7 @@ test_ceiling runN dim e =
 -- Reference Implementation
 -- ------------------------
 
-mapRef :: (Shape sh, Elt b) => (a -> b) -> Array sh a -> Array sh b
+mapRef :: (Shape sh, Elt a, Elt b) => (a -> b) -> Array sh a -> Array sh b
 mapRef f xs = fromFunction (arrayShape xs) (\ix -> f (xs Sugar.! ix))
 
 countLeadingZerosRef :: P.FiniteBits a => a -> Int

@@ -7,13 +7,16 @@ packages:
 - '.'
 
 extra-deps:
-- 'tasty-hedgehog-0.1.0.1'
+- half-0.3
+- hashtables-1.2.3.0
+- primitive-0.6.4.0
+- tasty-hedgehog-0.2.0.0
 
 # Override default flag values for local packages and extra-deps
-flags: {}
+# flags: {}
 
 # Extra package databases containing global packages
-extra-package-dbs: []
+# extra-package-dbs: []
 
 # Control whether we use the GHC we find on the path
 # system-ghc: true

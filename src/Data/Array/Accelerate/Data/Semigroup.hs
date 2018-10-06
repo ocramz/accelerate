@@ -1,12 +1,17 @@
+{-# LANGUAGE CPP                   #-}
 {-# LANGUAGE ConstraintKinds       #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RebindableSyntax      #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE ViewPatterns          #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
+#if __GLASGOW_HASKELL__ >= 806
+{-# LANGUAGE UndecidableInstances  #-}
+#endif
 -- |
 -- Module      : Data.Array.Accelerate.Data.Semigroup
 -- Copyright   : [2018] Trevor L. McDonell
@@ -43,22 +48,23 @@ import Data.Array.Accelerate.Type
 import Data.Function
 import Data.Monoid                                                  ( Monoid(..) )
 import Data.Semigroup
-import Prelude                                                      ( undefined )
 import qualified Prelude                                            as P
 
 
-type instance EltRepr (Min a) = ((), EltRepr a)
-
 instance Elt a => Elt (Min a) where
-  eltType _       = TypeRpair TypeRunit (eltType (undefined::a))
+  type EltRepr (Min a) = ((), EltRepr a)
+  {-# INLINE eltType     #-}
+  {-# INLINE [1] toElt   #-}
+  {-# INLINE [1] fromElt #-}
+  eltType         = TypeRpair TypeRunit (eltType @a)
   toElt ((),x)    = Min (toElt x)
   fromElt (Min x) = ((), fromElt x)
 
 instance Elt a => IsProduct Elt (Min a) where
   type ProdRepr (Min a) = ((), a)
-  toProd _ ((),a)    = Min a
-  fromProd _ (Min a) = ((),a)
-  prod _ _           = ProdRsnoc ProdRunit
+  toProd ((),a)    = Min a
+  fromProd (Min a) = ((),a)
+  prod             = ProdRsnoc ProdRunit
 
 instance (Lift Exp a, Elt (Plain a)) => Lift Exp (Min a) where
   type Plain (Min a) = Min (Plain a)
@@ -101,18 +107,20 @@ instance (Ord a, Bounded a) => Monoid (Exp (Min a)) where
   mappend = (<>)
 
 
-type instance EltRepr (Max a) = ((), EltRepr a)
-
 instance Elt a => Elt (Max a) where
-  eltType _       = TypeRpair TypeRunit (eltType (undefined::a))
+  type EltRepr (Max a) = ((), EltRepr a)
+  {-# INLINE eltType     #-}
+  {-# INLINE [1] toElt   #-}
+  {-# INLINE [1] fromElt #-}
+  eltType         = TypeRpair TypeRunit (eltType @a)
   toElt ((),x)    = Max (toElt x)
   fromElt (Max x) = ((), fromElt x)
 
 instance Elt a => IsProduct Elt (Max a) where
   type ProdRepr (Max a) = ((), a)
-  toProd _ ((),a)    = Max a
-  fromProd _ (Max a) = ((),a)
-  prod _ _           = ProdRsnoc ProdRunit
+  toProd ((),a)    = Max a
+  fromProd (Max a) = ((),a)
+  prod             = ProdRsnoc ProdRunit
 
 instance (Lift Exp a, Elt (Plain a)) => Lift Exp (Max a) where
   type Plain (Max a) = Max (Plain a)

@@ -3,6 +3,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PatternGuards         #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE UndecidableInstances  #-}
@@ -31,6 +32,7 @@ import Data.Array.Accelerate.Analysis.Match
 import Data.Array.Accelerate.Array.Sugar                            hiding ( (!), shape, ignore, toIndex )
 import Data.Array.Accelerate.Language                               hiding ( chr )
 import Data.Array.Accelerate.Prelude                                hiding ( filter )
+import Data.Array.Accelerate.Interpreter
 import Data.Array.Accelerate.Product
 import Data.Array.Accelerate.Smart
 import Data.Array.Accelerate.Type
@@ -45,12 +47,9 @@ import Data.Array.Accelerate.Data.Monoid
 import Data.Array.Accelerate.Data.Semigroup
 #endif
 
-import Data.Char
 import Data.Either                                                  ( Either(..) )
 import Data.Maybe
-import Data.Typeable
-import Foreign.C.Types
-import Prelude                                                      ( (.), ($), const, undefined, otherwise )
+import Prelude                                                      ( (.), ($), const, otherwise )
 
 
 -- | Lift a value into the 'Left' constructor
@@ -139,22 +138,24 @@ instance (Elt a, Elt b) => Semigroup (Exp (Either a b)) where
 tag :: (Elt a, Elt b) => Exp (Either a b) -> Exp Word8
 tag x = Exp $ SuccTupIdx (SuccTupIdx ZeroTupIdx) `Prj` x
 
-type instance EltRepr (Either a b) = TupleRepr (Word8, EltRepr a, EltRepr b)
-
 instance (Elt a, Elt b) => Elt (Either a b) where
-  eltType _ = eltType (undefined::(Word8,a,b))
+  type EltRepr (Either a b) = TupleRepr (Word8, EltRepr a, EltRepr b)
+  {-# INLINE eltType     #-}
+  {-# INLINE [1] toElt   #-}
+  {-# INLINE [1] fromElt #-}
+  eltType = eltType @(Word8,a,b)
   toElt ((((),0),a),_)  = Left  (toElt a)
   toElt (_         ,b)  = Right (toElt b)
-  fromElt (Left a)      = ((((),0), fromElt a), undef' (eltType (undefined::b)))
-  fromElt (Right b)     = ((((),1), undef' (eltType (undefined::a))), fromElt b)
+  fromElt (Left a)      = ((((),0), fromElt a), fromElt (evalUndef @b))
+  fromElt (Right b)     = ((((),1), fromElt (evalUndef @a)), fromElt b)
 
 instance (Elt a, Elt b) => IsProduct Elt (Either a b) where
   type ProdRepr (Either a b) = ProdRepr (Word8, a, b)
-  toProd _ ((((),0),a),_) = Left a
-  toProd _ (_         ,b) = Right b
-  fromProd _ (Left a)   = ((((), 0), a), toElt (undef' (eltType (undefined::b))))
-  fromProd _ (Right b)  = ((((), 1), toElt (undef' (eltType (undefined::a)))), b)
-  prod cst _ = prod cst (undefined::(Word8,a,b))
+  toProd ((((),0),a),_) = Left a
+  toProd (_         ,b) = Right b
+  fromProd (Left a)   = ((((), 0), a), evalUndef @b)
+  fromProd (Right b)  = ((((), 1), evalUndef @a), b)
+  prod = prod @Elt @(Word8,a,b)
 
 instance (Lift Exp a, Lift Exp b, Elt (Plain a), Elt (Plain b)) => Lift Exp (Either a b) where
   type Plain (Either a b) = Either (Plain a) (Plain b)
@@ -165,49 +166,13 @@ instance (Lift Exp a, Lift Exp b, Elt (Plain a), Elt (Plain b)) => Lift Exp (Eit
 -- Utilities
 -- ---------
 
--- We need an undefined value for the Nothing case. We just fill this with
--- zeros, though it would be better if we can actually do nothing, and leave
--- those value in memory undefined.
---
-undef' :: TupleType t -> t
-undef' TypeRunit         = ()
-undef' (TypeRpair ta tb) = (undef' ta, undef' tb)
-undef' (TypeRscalar s)   = scalar s
-
-scalar :: ScalarType t -> t
-scalar (SingleScalarType t) = single t
-scalar (VectorScalarType t) = vector t
-
-single :: SingleType t -> t
-single (NumSingleType    t) = num t
-single (NonNumSingleType t) = nonnum t
-
-vector :: VectorType t -> t
-vector (Vector2Type t)  = let x = single t in V2 x x
-vector (Vector3Type t)  = let x = single t in V3 x x x
-vector (Vector4Type t)  = let x = single t in V4 x x x x
-vector (Vector8Type t)  = let x = single t in V8 x x x x x x x x
-vector (Vector16Type t) = let x = single t in V16 x x x x x x x x x x x x x x x x
-
-num :: NumType t -> t
-num (IntegralNumType t) | IntegralDict <- integralDict t = 0
-num (FloatingNumType t) | FloatingDict <- floatingDict t = 0
-
-nonnum :: NonNumType t -> t
-nonnum TypeBool{}   = False
-nonnum TypeChar{}   = chr 0
-nonnum TypeCChar{}  = CChar 0
-nonnum TypeCSChar{} = CSChar 0
-nonnum TypeCUChar{} = CUChar 0
-
-
 filter'
     :: forall sh e. (Shape sh, Slice sh, Elt e)
     => Acc (Array (sh:.Int) Bool)     -- tags
     -> Acc (Array (sh:.Int) e)        -- values
     -> Acc (Vector e, Array sh Int)
 filter' keep arr
-  | Just Refl <- matchShapeType (undefined::sh) (undefined::Z)
+  | Just Refl <- matchShapeType @sh @Z
   = let
         (target, len)   = unlift $ scanl' (+) 0 (map boolToInt keep)
         prj ix          = keep!ix ? ( index1 (target!ix), ignore )
@@ -234,12 +199,4 @@ filter' keep arr
 
 emptyArray :: (Shape sh, Elt e) => Acc (Array sh e)
 emptyArray = fill (constant empty) undef
-
-matchShapeType :: forall s t. (Shape s, Shape t) => s -> t -> Maybe (s :~: t)
-matchShapeType _ _
-  | Just Refl <- matchTupleType (eltType (undefined::s)) (eltType (undefined::t))
-  = gcast Refl
-
-matchShapeType _ _
-  = Nothing
 

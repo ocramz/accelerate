@@ -1,7 +1,7 @@
 Name:                   accelerate
-Version:                1.2.0.0
-Cabal-version:          >= 1.8
-Tested-with:            GHC >= 7.8
+Version:                1.3.0.0
+Cabal-version:          >= 1.18
+Tested-with:            GHC >= 7.10
 Build-type:             Custom
 
 Synopsis:               An embedded language for accelerated array processing
@@ -42,8 +42,7 @@ Description:
       <http://en.wikipedia.org/wiki/CUDA#Supported_GPUs>
   .
     * @accelerate-examples@: Computational kernels and applications showcasing
-      the use of Accelerate as well as a regression test suite, supporting
-      function and performance testing.
+      the use of Accelerate.
   .
     * @accelerate-io@: Fast conversions between Accelerate arrays and other
       array formats (including vector and repa).
@@ -99,6 +98,8 @@ Description:
   .
   [/Mailing list and contacts/]
   .
+    * Gitter chat: <https://gitter.im/AccelerateHS/Lobby>
+  .
     * Mailing list: <accelerate-haskell@googlegroups.com> (discussion of both
       use and development welcome).
   .
@@ -128,8 +129,6 @@ Stability:              Experimental
 Extra-source-files:
     README.md
     CHANGELOG.md
-    cbits/flags.inc
-    cbits/monitoring.inc
 
 Extra-doc-files:
     images/*.png
@@ -260,27 +259,33 @@ Flag internal-checks
   Description:          Enable internal consistency checks
   Default:              False
 
+Flag nofib
+  Default:              True
+  Description:
+    You can disable building the nofib test suite with this flag. Disabling this
+    is an unsupported configuration, but is useful for accelerating builds.
+
 Library
   Build-depends:
-          base                          >= 4.7 && < 4.12
+          base                          >= 4.7 && < 4.13
         , ansi-terminal                 >= 0.6.2
         , ansi-wl-pprint                >= 0.6
         , base-orphans                  >= 0.3
         , bytestring                    >= 0.10.2
         , containers                    >= 0.3
-        , constraints                   >= 0.9
         , cryptonite                    >= 0.21
         , deepseq                       >= 1.3
         , directory                     >= 1.0
         , exceptions                    >= 0.6
         , filepath                      >= 1.0
         , ghc-prim
-        , half                          >= 0.2
+        , half                          >= 0.3
         , hashable                      >= 1.1
-        , hashtables                    >= 1.0
+        , hashtables                    >= 1.2.3
         , hedgehog                      >= 0.5
         , lens                          >= 4.0
         , mtl                           >= 2.0
+        , primitive                     >= 0.6.4
         , tasty                         >= 0.11
         , tasty-expected-failure        >= 0.11
         , tasty-hedgehog                >= 0.1
@@ -291,9 +296,6 @@ Library
         , unique
         , unordered-containers          >= 0.2
         , vector                        >= 0.10
-
-        -- nofib test suite
-        -- , pipes                         >= 4.1.6   -- #286
 
   Exposed-modules:
         -- The core language and reference implementation
@@ -342,7 +344,6 @@ Library
   Other-modules:
         Data.Atomic
         Data.Array.Accelerate.Analysis.Hash.TH
-        Data.Array.Accelerate.Array.Lifted
         Data.Array.Accelerate.Array.Remote.Nursery
         Data.Array.Accelerate.Classes
         Data.Array.Accelerate.Classes.Bounded
@@ -365,6 +366,8 @@ Library
         Data.Array.Accelerate.Debug.Trace
         Data.Array.Accelerate.Language
         Data.Array.Accelerate.Lift
+        Data.Array.Accelerate.Orphans
+        Data.Array.Accelerate.Pattern
         Data.Array.Accelerate.Prelude
         Data.Array.Accelerate.Pretty.Graphviz
         Data.Array.Accelerate.Pretty.Graphviz.Monad
@@ -378,11 +381,19 @@ Library
         Data.Array.Accelerate.Trafo.Shrink
         Data.Array.Accelerate.Trafo.Simplify
         Data.Array.Accelerate.Trafo.Substitution
+
+        -- Data.Array.Accelerate.Array.Lifted
         -- Data.Array.Accelerate.Trafo.Vectorise
 
         -- nofib test suite
         Data.Array.Accelerate.Test.NoFib.Base
         Data.Array.Accelerate.Test.NoFib.Config
+
+  if flag(nofib)
+    -- build-depends:
+    --     , pipes                         >= 4.1.6   -- #286
+
+    other-modules:
         Data.Array.Accelerate.Test.NoFib.Sharing
         Data.Array.Accelerate.Test.NoFib.Prelude
         Data.Array.Accelerate.Test.NoFib.Prelude.Map
@@ -421,13 +432,23 @@ Library
         Data.Array.Accelerate.Test.NoFib.Issues.Issue362
         Data.Array.Accelerate.Test.NoFib.Issues.Issue407
         Data.Array.Accelerate.Test.NoFib.Issues.Issue409
+  else
+    cpp-options:
+        -DACCELERATE_DISABLE_NOFIB
 
   if impl(ghc >= 8.0)
     exposed-modules:
         Data.Array.Accelerate.Data.Semigroup
 
+  default-language:
+        Haskell2010
+
   hs-source-dirs:
         src
+
+  c-sources:
+        cbits/atomic.c
+        cbits/clock.c
 
   if flag(debug) || flag(ekg)
     ghc-options:
@@ -439,18 +460,17 @@ Library
     -- Weird handling of C files because Cabal is not recompile C files on
     -- changes to cc-options: <https://github.com/haskell/cabal/issues/4937>
     c-sources:
-        cbits/atomic.c
-        cbits/clock.c
         cbits/flags_debug.c
         cbits/monitoring_debug.c
   else
     c-sources:
-        cbits/atomic.c
         cbits/flags.c
         cbits/monitoring.c
 
   if flag(ekg)
-    cpp-options:        -DACCELERATE_MONITORING
+    cpp-options:
+        -DACCELERATE_MONITORING
+
     build-depends:
           async                         >= 2.0
         , ekg                           >= 0.1
@@ -466,7 +486,8 @@ Library
         -DACCELERATE_UNSAFE_CHECKS
 
   if flag(internal-checks)
-    cpp-options:        -DACCELERATE_INTERNAL_CHECKS
+    cpp-options:
+        -DACCELERATE_INTERNAL_CHECKS
 
   if os(windows)
     cpp-options:        -DWIN32
@@ -482,28 +503,16 @@ Library
   ghc-options:
         -O2
         -Wall
+        -Wcompat
+        -Wmissed-specialisations
+        -- -Wredundant-constraints
+        -freduction-depth=50
+        -fspec-constr-count=25
         -funbox-strict-fields
-        -fno-warn-name-shadowing
 
   ghc-prof-options:
         -caf-all
         -auto-all
-
-  if impl(ghc >= 7.0)
-    ghc-options:
-        -fspec-constr-count=25
-
-  if impl(ghc == 7.*)
-    ghc-options:
-        -fcontext-stack=35
-
-  if impl(ghc >= 8.0)
-    ghc-options:
-        -freduction-depth=35
-
-  if impl(ghc < 7.10)
-    build-depends:
-          th-lift-instances             >= 0.1
 
   -- Don't add the extensions list here. Instead, place individual LANGUAGE
   -- pragmas in the files that require a specific extension. This means the
@@ -514,11 +523,9 @@ Library
 
 test-suite doctest
   type:                 exitcode-stdio-1.0
+  default-language:     Haskell2010
   hs-source-dirs:       test/doctest
   main-is:              Main.hs
-
-  other-modules:
-        Build_doctests
 
   build-depends:
           base                          >= 4.7
@@ -530,21 +537,14 @@ test-suite doctest
         -threaded
         -rtsopts
 
-  -- older ghc does not support the dimension-specialised show instances for
-  -- arrays, which the doctests use
-  if impl(ghc < 7.10)
-    buildable:          False
-
-  -- doctest only supports a single x-doctest-options line
-  if impl(ghc == 7.*)
-    x-doctest-options:  -fspec-constr-count=25 -fcontext-stack=35
-
-  if impl(ghc >= 8.0)
-    x-doctest-options:  -fspec-constr-count=25 -freduction-depth=35
+  x-doctest-options:
+        -fspec-constr-count=25
+        -freduction-depth=50
 
 
 test-suite nofib-interpreter
   type:                 exitcode-stdio-1.0
+  default-language:     Haskell2010
   hs-source-dirs:       test/nofib
   main-is:              Main.hs
 
@@ -553,8 +553,8 @@ test-suite nofib-interpreter
         , accelerate
 
   ghc-options:
-        -Wall
         -O2
+        -Wall
         -threaded
         -rtsopts
         -with-rtsopts=-A128M
@@ -566,7 +566,7 @@ source-repository head
 
 source-repository this
   Type:                 git
-  Tag:                  1.2.0.0
+  Tag:                  v1.3.0.0
   Location:             git://github.com/AccelerateHS/accelerate.git
 
 -- vim: nospell

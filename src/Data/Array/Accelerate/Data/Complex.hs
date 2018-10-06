@@ -5,6 +5,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RebindableSyntax      #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TypeSynonymInstances  #-}
 {-# LANGUAGE UndecidableInstances  #-}
@@ -49,7 +50,7 @@ import Data.Array.Accelerate.Product
 import Data.Array.Accelerate.Smart
 import Data.Array.Accelerate.Type
 
-import Prelude                                                      ( ($), undefined )
+import Prelude                                                      ( ($) )
 import Data.Complex                                                 ( Complex(..) )
 import qualified Data.Complex                                       as C
 import qualified Prelude                                            as P
@@ -60,42 +61,57 @@ import qualified Prelude                                            as P
 -- specific types (not for any type 'a') as we can only have vectors of
 -- primitive type.
 --
-type instance EltRepr (Complex Half)    = V2 Half
-type instance EltRepr (Complex Float)   = V2 Float
-type instance EltRepr (Complex Double)  = V2 Double
-type instance EltRepr (Complex CFloat)  = V2 CFloat
-type instance EltRepr (Complex CDouble) = V2 CDouble
 
 instance Elt (Complex Half) where
-  eltType _        = TypeRscalar scalarType
+  type EltRepr (Complex Half) = V2 Half
+  {-# INLINE eltType     #-}
+  {-# INLINE [1] toElt   #-}
+  {-# INLINE [1] fromElt #-}
+  eltType          = TypeRscalar scalarType
   toElt (V2 r i)   = r :+ i
   fromElt (r :+ i) = V2 r i
 
 instance Elt (Complex Float) where
-  eltType _        = TypeRscalar scalarType
+  type EltRepr (Complex Float) = V2 Float
+  {-# INLINE eltType     #-}
+  {-# INLINE [1] toElt   #-}
+  {-# INLINE [1] fromElt #-}
+  eltType          = TypeRscalar scalarType
   toElt (V2 r i)   = r :+ i
   fromElt (r :+ i) = V2 r i
 
 instance Elt (Complex Double) where
-  eltType _        = TypeRscalar scalarType
+  type EltRepr (Complex Double) = V2 Double
+  {-# INLINE eltType     #-}
+  {-# INLINE [1] toElt   #-}
+  {-# INLINE [1] fromElt #-}
+  eltType          = TypeRscalar scalarType
   toElt (V2 r i)   = r :+ i
   fromElt (r :+ i) = V2 r i
 
 instance Elt (Complex CFloat) where
-  eltType _        = TypeRscalar scalarType
-  toElt (V2 r i)   = r :+ i
-  fromElt (r :+ i) = V2 r i
+  type EltRepr (Complex CFloat) = V2 Float
+  {-# INLINE eltType     #-}
+  {-# INLINE [1] toElt   #-}
+  {-# INLINE [1] fromElt #-}
+  eltType                        = TypeRscalar scalarType
+  toElt (V2 r i)                 = CFloat r :+ CFloat i
+  fromElt (CFloat r :+ CFloat i) = V2 r i
 
 instance Elt (Complex CDouble) where
-  eltType _        = TypeRscalar scalarType
-  toElt (V2 r i)   = r :+ i
-  fromElt (r :+ i) = V2 r i
+  type EltRepr (Complex CDouble) = V2 Double
+  {-# INLINE eltType     #-}
+  {-# INLINE [1] toElt   #-}
+  {-# INLINE [1] fromElt #-}
+  eltType                          = TypeRscalar scalarType
+  toElt (V2 r i)                   = CDouble r :+ CDouble i
+  fromElt (CDouble r :+ CDouble i) = V2 r i
 
 instance cst a => IsProduct cst (Complex a) where
-  type ProdRepr (Complex a) = ProdRepr (V2 a)
-  fromProd cst (r :+ i) = fromProd cst (V2 r i)
-  toProd cst p          = let (V2 r i) = toProd cst p in (r :+ i)
-  prod cst _            = prod cst (undefined :: (V2 a))
+  type ProdRepr (Complex a) = ProdRepr (a,a)
+  fromProd (r :+ i) = fromProd @cst (r,i)
+  toProd p          = let (r,i) = toProd @cst p in (r :+ i)
+  prod              = prod @cst @(a,a)
 
 instance (Lift Exp a, Elt (Plain a), Elt (Complex (Plain a))) => Lift Exp (Complex a) where
   type Plain (Complex a) = Complex (Plain a)

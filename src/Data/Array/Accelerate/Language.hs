@@ -444,10 +444,15 @@ zipWith = Acc $$$ ZipWith
 -- Reductions
 -- ----------
 
--- | Reduction of the innermost dimension of an array of arbitrary rank. The
--- first argument needs to be an /associative/ function to enable an efficient
--- parallel implementation. The initial element does not need to be an identity
--- element of the combination function.
+-- | Reduction of the innermost dimension of an array of arbitrary rank.
+--
+-- The shape of the result obeys the property:
+--
+-- > shape (fold f z xs) == indexTail (shape xs)
+--
+-- The first argument needs to be an /associative/ function to enable an
+-- efficient parallel implementation. The initial element does not need to be an
+-- identity element of the combination function.
 --
 -- >>> let mat = fromList (Z:.5:.10) [0..] :: Matrix Int
 -- >>> mat
@@ -507,10 +512,15 @@ fold :: (Shape sh, Elt a)
      -> Acc (Array sh a)
 fold = Acc $$$ Fold
 
--- | Variant of 'fold' that requires the reduced array to be non-empty and
--- doesn't need an default value.  The first argument needs to be an
--- /associative/ function to enable an efficient parallel implementation. The
--- initial element does not need to be an identity element.
+-- | Variant of 'fold' that requires the innermost dimension of the array to be
+-- non-empty and doesn't need an default value.
+--
+-- The shape of the result obeys the property:
+--
+-- > shape (fold f z xs) == indexTail (shape xs)
+--
+-- The first argument needs to be an /associative/ function to enable an
+-- efficient parallel implementation, but does not need to be commutative.
 --
 fold1 :: (Shape sh, Elt a)
       => (Exp a -> Exp a -> Exp a)
@@ -626,10 +636,8 @@ scanl' :: (Shape sh, Elt a)
 scanl' = Acc $$$ Scanl'
 
 -- | Data.List style left-to-right scan along the innermost dimension without an
--- initial value (aka inclusive scan). The array must not be empty. The first
--- argument needs to be an /associative/ function. Denotationally, we have:
---
--- > scanl1 f e arr = tail (scanl f e arr)
+-- initial value (aka inclusive scan). The innermost dimension of the array must
+-- not be empty. The first argument must be an /associative/ function.
 --
 -- >>> let mat = fromList (Z:.4:.10) [0..] :: Matrix Int
 -- >>> run $ scanl1 (+) (use mat)
@@ -890,6 +898,29 @@ type Stencil5x5x5 a = (Stencil5x5 a, Stencil5x5 a, Stencil5x5 a, Stencil5x5 a, S
 -- > blur = stencil (convolve5x1 gaussian) clamp
 -- >      . stencil (convolve1x5 gaussian) clamp
 --
+-- [/Note:/]
+--
+-- Since accelerate-1.3.0.0, we allow the source array to fuse into the stencil
+-- operation. However, since a stencil computation (typically) requires multiple
+-- values from the source array, this means that the work of the fused operation
+-- will be duplicated for each element in the stencil pattern.
+--
+-- For example, suppose we write:
+--
+-- > blur . map f
+--
+-- The operation `f` will be fused into each element of the first Gaussian blur
+-- kernel, resulting in a stencil equivalent to:
+--
+-- > f_and_convolve1x5 :: Num a => (Exp a -> Exp b) -> [Exp b] -> Stencil1x5 a -> Exp b
+-- > f_and_convolve1x5 f kernel ((_,a,_), (_,b,_), (_,c,_), (_,d,_), (_,e,_))
+-- >   = Prelude.sum $ Prelude.zipWith (*) kernel [f a, f b, f c, f d, f e]
+--
+-- This duplication is often beneficial, however you may choose to instead force
+-- the array to be evaluated first, preventing fusion, using the
+-- `Data.Array.Accelerate.Prelude.compute` operation. Benchmarking should reveal
+-- which approach is best for your application.
+--
 stencil
     :: (Stencil sh a stencil, Elt b)
     => (stencil -> Exp b)                     -- ^ stencil function
@@ -944,7 +975,7 @@ mirror :: Boundary (Array sh e)
 mirror = Boundary Mirror
 
 -- | Stencil boundary condition where coordinates beyond the array extent
--- instead wrap around the array.
+-- instead wrap around the array (circular boundary conditions).
 --
 -- In the following 3x3 stencil, the out of bounds elements will be read as in
 -- the pattern on the right.
@@ -961,6 +992,27 @@ wrap = Boundary Wrap
 
 -- | Stencil boundary condition where the given function is applied to any
 -- outlying coordinates.
+--
+-- The function is passed the out-of-bounds index, so you can use it to specify
+-- different boundary conditions at each side. For example, the following would
+-- clamp out-of-bounds elements in the y-direction to zero, while having
+-- circular boundary conditions in the x-direction.
+--
+-- > ring :: Acc (Matrix Float) -> Acc (Matrix Float)
+-- > ring xs = stencil f boundary xs
+-- >   where
+-- >     boundary :: Boundary (Matrix Float)
+-- >     boundary = function $ \(unlift -> Z :. y :. x) ->
+-- >       if y < 0 || y >= height
+-- >         then 0
+-- >         else if x < 0
+-- >                then xs ! index2 y (width+x)
+-- >                else xs ! index2 y (x-width)
+-- >
+-- >     f :: Stencil3x3 Float -> Exp Float
+-- >     f = ...
+-- >
+-- >     Z :. height :. width = unlift (shape xs)
 --
 function
     :: (Shape sh, Elt e)

@@ -9,8 +9,8 @@
 {-# LANGUAGE RankNTypes           #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE TemplateHaskell      #-}
+{-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE TypeOperators        #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns         #-}
 {-# OPTIONS_GHC -fno-warn-incomplete-patterns #-}
 {-# OPTIONS_GHC -fno-warn-name-shadowing      #-}
@@ -198,8 +198,8 @@ manifest fuseAcc (OpenAcc pacc) =
     Scanr1 f a              -> Scanr1   (cvtF f) (delayed fuseAcc a)
     Scanr' f z a            -> Scanr'   (cvtF f) (cvtE z) (delayed fuseAcc a)
     Permute f d p a         -> Permute  (cvtF f) (manifest fuseAcc d) (cvtF p) (delayed fuseAcc a)
-    Stencil f x a           -> Stencil  (cvtF f) (cvtB x) (manifest fuseAcc a)
-    Stencil2 f x a y b      -> Stencil2 (cvtF f) (cvtB x) (manifest fuseAcc a) (cvtB y) (manifest fuseAcc b)
+    Stencil f x a           -> Stencil  (cvtF f) (cvtB x) (delayed fuseAcc a)
+    Stencil2 f x a y b      -> Stencil2 (cvtF f) (cvtB x) (delayed fuseAcc a) (cvtB y) (delayed fuseAcc b)
     -- Collect s               -> Collect  (cvtS s)
 
     where
@@ -445,8 +445,8 @@ embedPreAcc fuseAcc embedAcc elimAcc pacc
     Scanr1 f a          -> embed  (into  Scanr1        (cvtF f)) a
     Scanr' f z a        -> embed  (into2 Scanr'        (cvtF f) (cvtE z)) a
     Permute f d p a     -> embed2 (into2 permute       (cvtF f) (cvtF p)) d a
-    Stencil f x a       -> lift   (into2 Stencil       (cvtF f) (cvtB x)) a
-    Stencil2 f x a y b  -> lift2  (into3 stencil2      (cvtF f) (cvtB x) (cvtB y)) a b
+    Stencil f x a       -> embed  (into2 stencil1      (cvtF f) (cvtB x)) a
+    Stencil2 f x a y b  -> embed2 (into3 stencil2      (cvtF f) (cvtB x) (cvtB y)) a b
 
   where
     -- If fusion is not enabled, force terms to the manifest representation
@@ -470,6 +470,16 @@ embedPreAcc fuseAcc embedAcc elimAcc pacc
     -- Helpers to shuffle the order of arguments to a constructor
     --
     permute f p d a     = Permute f d p a
+
+    -- Note: [Stencil fusion]
+    --
+    -- We allow stencils to delay their argument arrays with no special
+    -- considerations. This means that the delayed function will be evaluated
+    -- _at every element_ of the stencil pattern. We should do some analysis of
+    -- when this duplication is beneficial (keeping in mind that the stencil
+    -- implementations themselves may share neighbouring elements).
+    --
+    stencil1 f x a      = Stencil  f x a
     stencil2 f x y a b  = Stencil2 f x a y b
 
     -- Conversions for closed scalar functions and expressions. This just
@@ -531,19 +541,6 @@ embedPreAcc fuseAcc embedAcc elimAcc pacc
            -> Embed acc aenv cs
     embed2 = trav2 id id
 
-    lift :: (Arrays as, Arrays bs)
-         => (forall aenv'. Extend acc aenv aenv' -> acc aenv' as -> PreOpenAcc acc aenv' bs)
-         ->       acc aenv as
-         -> Embed acc aenv bs
-    lift = trav1 bind
-
-    lift2 :: forall aenv as bs cs. (Arrays as, Arrays bs, Arrays cs)
-          => (forall aenv'. Extend acc aenv aenv' -> acc aenv' as -> acc aenv' bs -> PreOpenAcc acc aenv' cs)
-          ->       acc aenv as
-          ->       acc aenv bs
-          -> Embed acc aenv cs
-    lift2 = trav2 bind bind
-
     trav1 :: (Arrays as, Arrays bs)
           => (forall aenv'. Embed acc aenv' as -> Embed acc aenv' as)
           -> (forall aenv'. Extend acc aenv aenv' -> acc aenv' as -> PreOpenAcc acc aenv' bs)
@@ -565,23 +562,10 @@ embedPreAcc fuseAcc embedAcc elimAcc pacc
       , acc0    <- inject . compute' $ cc0
       = Embed (env `PushEnv` inject (op env acc1 acc0)) (Done ZeroIdx)
 
-    -- Helper functions to lift out and let-bind a manifest array. That is,
-    -- instead of the sequence
-    --
-    -- > stencil s (map f a)
-    --
-    -- we get:
-    --
-    -- > let a' = map f a
-    -- > in  stencil s a'
-    --
-    -- This is required for the LLVM backend's default implementation of
-    -- stencil operations.
-    --
-    bind :: Arrays as => Embed acc aenv' as -> Embed acc aenv' as
-    bind (Embed env cc)
-      | Done{} <- cc = Embed env                                  cc
-      | otherwise    = Embed (env `PushEnv` inject (compute' cc)) (Done ZeroIdx)
+    -- force :: Arrays as => Embed acc aenv' as -> Embed acc aenv' as
+    -- force (Embed env cc)
+    --   | Done{} <- cc = Embed env                                  cc
+    --   | otherwise    = Embed (env `PushEnv` inject (compute' cc)) (Done ZeroIdx)
 
     -- -- Move additional bindings for producers outside of the sequence, so that
     -- -- producers may fuse with their arguments resulting in actual sequencing
@@ -805,7 +789,7 @@ shape cc
 -- Reified type of a delayed array representation.
 --
 accType :: forall acc aenv a. Arrays a => Cunctation acc aenv a -> ArraysR (ArrRepr a)
-accType _ = arrays (undefined :: a)
+accType _ = arrays @a
 
 
 -- Environment manipulation
@@ -945,7 +929,7 @@ unzipD
     -> Embed  acc aenv (Array sh a)
     -> Maybe (Embed acc aenv (Array sh b))
 unzipD f (Embed env (Done v))
-  | TypeRscalar VectorScalarType{} <- eltType (undefined::a)
+  | TypeRscalar VectorScalarType{} <- eltType @a
   = Nothing
 
   | Lam (Body (Prj tix (Var ZeroIdx))) <- f

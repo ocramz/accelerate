@@ -1,8 +1,11 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE GADTs               #-}
+{-# LANGUAGE MagicHash           #-}
 {-# LANGUAGE PatternGuards       #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell     #-}
+{-# LANGUAGE TypeApplications    #-}
 {-# OPTIONS_HADDOCK hide #-}
 -- |
 -- Module      : Data.Array.Accelerate.Analysis.Hash
@@ -39,11 +42,10 @@ import Data.Array.Accelerate.Product
 import Data.Array.Accelerate.Type
 
 import Crypto.Hash
-import Data.Bits
 import Data.ByteString.Builder
 import Data.ByteString.Builder.Extra
+import Data.ByteString.Short.Internal                               ( ShortByteString(..) )
 import Data.Monoid
-import Foreign.C.Types
 import System.IO.Unsafe                                             ( unsafePerformIO )
 import System.Mem.StableName                                        ( hashStableName, makeStableName )
 import Prelude                                                      hiding ( exp )
@@ -83,7 +85,7 @@ encodePreOpenAcc encodeAcc pacc =
   let
       {-# INLINE travA #-}
       travA :: forall aenv' a. Arrays a => acc aenv' a -> Builder
-      travA a = encodeArraysType (arrays (undefined::a)) <> encodeAcc a
+      travA a = encodeArraysType (arrays @a) <> encodeAcc a
 
       {-# INLINE travE #-}
       travE :: PreOpenExp acc env' aenv' e -> Builder
@@ -99,7 +101,7 @@ encodePreOpenAcc encodeAcc pacc =
 
       {-# INLINE nacl #-}
       nacl :: Arrays arrs => Builder
-      nacl = encodeArraysType (arrays (undefined::arrs))
+      nacl = encodeArraysType (arrays @arrs)
   in
   case pacc of
     Alet bnd body               -> intHost $(hashQ "Alet")        <> travA bnd <> travA body
@@ -108,7 +110,7 @@ encodePreOpenAcc encodeAcc pacc =
     Aprj ix a                   -> intHost $(hashQ "Aprj")        <> nacl <> encodeTupleIdx ix <> travA a
     Apply f a                   -> intHost $(hashQ "Apply")       <> nacl <> encodePreOpenAfun encodeAcc f <> travA a
     Aforeign _ f a              -> intHost $(hashQ "Aforeign")    <> nacl <> encodePreOpenAfun encodeAcc f <> travA a
-    Use a                       -> intHost $(hashQ "Use")         <> encodeArrays (arrays (undefined::arrs)) a
+    Use a                       -> intHost $(hashQ "Use")         <> encodeArrays (arrays @arrs) a
     Awhile p f a                -> intHost $(hashQ "Awhile")      <> encodePreOpenAfun encodeAcc f <> encodePreOpenAfun encodeAcc p <> travA a
     Unit e                      -> intHost $(hashQ "Unit")        <> travE e
     Generate e f                -> intHost $(hashQ "Generate")    <> travE e  <> travF f
@@ -154,7 +156,7 @@ encodePreOpenSeq encodeAcc s =
       travS = encodePreOpenSeq encodeAcc
 
       travV :: forall a. Arrays a => Idx senv' a -> Builder
-      travV v = encodeArraysType (arrays (undefined::a)) <> encodeIdx v
+      travV v = encodeArraysType (arrays @a) <> encodeIdx v
 
       travP :: Producer acc aenv senv a -> Builder
       travP p =
@@ -197,11 +199,11 @@ encodeArrays ArraysRarray        ad       = intHost . unsafePerformIO $! hashSta
 encodeArraysType :: forall a. ArraysR a -> Builder
 encodeArraysType ArraysRunit         = intHost $(hashQ "ArraysRunit")
 encodeArraysType (ArraysRpair r1 r2) = intHost $(hashQ "ArraysRpair")  <> encodeArraysType r1 <> encodeArraysType r2
-encodeArraysType ArraysRarray        = intHost $(hashQ "ArraysRarray") <> encodeArrayType (undefined::a)
+encodeArraysType ArraysRarray        = intHost $(hashQ "ArraysRarray") <> encodeArrayType @a
   where
     {-# INLINE encodeArrayType #-}
-    encodeArrayType :: forall sh e. (Shape sh, Elt e) => Array sh e -> Builder
-    encodeArrayType _ = encodeTupleType (eltType (undefined::sh)) <> encodeTupleType (eltType (undefined::e))
+    encodeArrayType :: forall array sh e. (array ~ Array sh e, Shape sh, Elt e) => Builder
+    encodeArrayType = encodeTupleType (eltType @sh) <> encodeTupleType (eltType @e)
 
 {-# INLINE encodeAtuple #-}
 encodeAtuple :: EncodeAcc acc -> Atuple (acc aenv) a -> Builder
@@ -214,11 +216,11 @@ encodePreOpenAfun travA afun =
   let
       {-# INLINE travB #-}
       travB :: forall aenv' a. Arrays a => acc aenv' a -> Builder
-      travB b = encodeArraysType (arrays (undefined::a)) <> travA b
+      travB b = encodeArraysType (arrays @a) <> travA b
 
       {-# INLINE travL #-}
       travL :: forall aenv' a b. Arrays a => PreOpenAfun acc (aenv',a) b -> Builder
-      travL l = encodeArraysType (arrays (undefined::a)) <> encodePreOpenAfun travA l
+      travL l = encodeArraysType (arrays @a) <> encodePreOpenAfun travA l
   in
   case afun of
     Abody b -> intHost $(hashQ "Abody") <> travB b
@@ -230,7 +232,7 @@ encodePreBoundary :: forall acc aenv sh e. EncodeAcc acc -> PreBoundary acc aenv
 encodePreBoundary _ Wrap          = intHost $(hashQ "Wrap")
 encodePreBoundary _ Clamp         = intHost $(hashQ "Clamp")
 encodePreBoundary _ Mirror        = intHost $(hashQ "Mirror")
-encodePreBoundary _ (Constant c)  = intHost $(hashQ "Constant") <> encodeConst (eltType (undefined::e)) c
+encodePreBoundary _ (Constant c)  = intHost $(hashQ "Constant") <> encodeConst (eltType @e) c
 encodePreBoundary h (Function f)  = intHost $(hashQ "Function") <> encodePreOpenFun h f
 
 {-# INLINE encodeSliceIndex #-}
@@ -253,7 +255,7 @@ encodePreOpenExp travA exp =
   let
       {-# INLINE travE #-}
       travE :: forall env' aenv' e. Elt e => PreOpenExp acc env' aenv' e -> Builder
-      travE e =  encodeTupleType (eltType (undefined::e)) <> encodePreOpenExp travA e
+      travE e =  encodeTupleType (eltType @e) <> encodePreOpenExp travA e
 
       {-# INLINE travF #-}
       travF :: PreOpenFun acc env' aenv' f -> Builder
@@ -261,14 +263,14 @@ encodePreOpenExp travA exp =
 
       {-# INLINE nacl #-}
       nacl :: Elt exp => Builder
-      nacl = encodeTupleType (eltType (undefined::exp))
+      nacl = encodeTupleType (eltType @exp)
   in
   case exp of
     Let bnd body                -> intHost $(hashQ "Let")         <> travE bnd <> travE body
     Var ix                      -> intHost $(hashQ "Var")         <> nacl <> encodeIdx ix
     Tuple t                     -> intHost $(hashQ "Tuple")       <> nacl <> encodeTuple travA t
     Prj i e                     -> intHost $(hashQ "Prj")         <> nacl <> encodeTupleIdx i <> travE e -- XXX: here multiplied nacl by hashTupleIdx
-    Const c                     -> intHost $(hashQ "Const")       <> encodeConst (eltType (undefined::exp)) c
+    Const c                     -> intHost $(hashQ "Const")       <> encodeConst (eltType @exp) c
     Undef                       -> intHost $(hashQ "Undef")
     IndexAny                    -> intHost $(hashQ "IndexAny")    <> nacl
     IndexNil                    -> intHost $(hashQ "IndexNil")
@@ -298,10 +300,10 @@ encodePreOpenFun :: forall acc env aenv f. EncodeAcc acc -> PreOpenFun acc env a
 encodePreOpenFun travA fun =
   let
       travB :: forall env' aenv' e. Elt e => PreOpenExp acc env' aenv' e -> Builder
-      travB b = encodeTupleType (eltType (undefined::e)) <> encodePreOpenExp travA b
+      travB b = encodeTupleType (eltType @e) <> encodePreOpenExp travA b
 
       travL :: forall env' aenv' a b. Elt a => PreOpenFun acc (env',a) aenv' b -> Builder
-      travL l = encodeTupleType (eltType (undefined::a)) <> encodePreOpenFun travA l
+      travL l = encodeTupleType (eltType @a) <> encodePreOpenFun travA l
   in
   case fun of
     Body b -> intHost $(hashQ "Body") <> travB b
@@ -330,28 +332,13 @@ encodeSingleConst (NumSingleType t)    = encodeNumConst t
 encodeSingleConst (NonNumSingleType t) = encodeNonNumConst t
 
 {-# INLINE encodeVectorConst #-}
-encodeVectorConst :: VectorType t -> t -> Builder
-encodeVectorConst (Vector2Type t) (V2 a b)     = intHost $(hashQ "V2") <> encodeSingleConst t a <> encodeSingleConst t b
-encodeVectorConst (Vector3Type t) (V3 a b c)   = intHost $(hashQ "V3") <> encodeSingleConst t a <> encodeSingleConst t b <> encodeSingleConst t c
-encodeVectorConst (Vector4Type t) (V4 a b c d) = intHost $(hashQ "V4") <> encodeSingleConst t a <> encodeSingleConst t b <> encodeSingleConst t c <> encodeSingleConst t d
-encodeVectorConst (Vector8Type t) (V8 a b c d e f g h) =
-  intHost $(hashQ "V8") <> encodeSingleConst t a <> encodeSingleConst t b <> encodeSingleConst t c <> encodeSingleConst t d
-                        <> encodeSingleConst t e <> encodeSingleConst t f <> encodeSingleConst t g <> encodeSingleConst t h
-encodeVectorConst (Vector16Type t) (V16 a b c d e f g h i j k l m n o p) =
-  intHost $(hashQ "V16") <> encodeSingleConst t a <> encodeSingleConst t b <> encodeSingleConst t c <> encodeSingleConst t d
-                         <> encodeSingleConst t e <> encodeSingleConst t f <> encodeSingleConst t g <> encodeSingleConst t h
-                         <> encodeSingleConst t i <> encodeSingleConst t j <> encodeSingleConst t k <> encodeSingleConst t l
-                         <> encodeSingleConst t m <> encodeSingleConst t n <> encodeSingleConst t o <> encodeSingleConst t p
+encodeVectorConst :: VectorType (Vec n t) -> Vec n t -> Builder
+encodeVectorConst (VectorType n t) (Vec ba#) = intHost $(hashQ "Vec") <> intHost n <> encodeSingleType t <> shortByteString (SBS ba#)
 
 {-# INLINE encodeNonNumConst #-}
 encodeNonNumConst :: NonNumType t -> t -> Builder
-encodeNonNumConst TypeBool{}   x          = intHost $(hashQ "Bool")   <> word8 (fromBool x)
-encodeNonNumConst TypeChar{}   x          = intHost $(hashQ "Char")   <> charUtf8 x
-encodeNonNumConst TypeCSChar{} (CSChar x) = intHost $(hashQ "CSChar") <> int8 x
-encodeNonNumConst TypeCUChar{} (CUChar x) = intHost $(hashQ "CUChar") <> word8 x
-encodeNonNumConst TypeCChar{}  (CChar  x) = intHost $(hashQ "CChar")  <> $( case isSigned (undefined::CChar) of
-                                                                              True  -> [e| int8  |]
-                                                                              False -> [e| word8 |] ) x
+encodeNonNumConst TypeBool{} x = intHost $(hashQ "Bool")   <> word8 (fromBool x)
+encodeNonNumConst TypeChar{} x = intHost $(hashQ "Char")   <> charUtf8 x
 
 {-# INLINE fromBool #-}
 fromBool :: Bool -> Word8
@@ -365,38 +352,22 @@ encodeNumConst (FloatingNumType t) = encodeFloatingConst t
 
 {-# INLINE encodeIntegralConst #-}
 encodeIntegralConst :: IntegralType t -> t -> Builder
-encodeIntegralConst TypeInt{}     x           = intHost $(hashQ "Int")     <> intHost x
-encodeIntegralConst TypeInt8{}    x           = intHost $(hashQ "Int8")    <> int8 x
-encodeIntegralConst TypeInt16{}   x           = intHost $(hashQ "Int16")   <> int16Host x
-encodeIntegralConst TypeInt32{}   x           = intHost $(hashQ "Int32")   <> int32Host x
-encodeIntegralConst TypeInt64{}   x           = intHost $(hashQ "Int64")   <> int64Host x
-encodeIntegralConst TypeWord{}    x           = intHost $(hashQ "Word")    <> wordHost x
-encodeIntegralConst TypeWord8{}   x           = intHost $(hashQ "Word8")   <> word8 x
-encodeIntegralConst TypeWord16{}  x           = intHost $(hashQ "Word16")  <> word16Host x
-encodeIntegralConst TypeWord32{}  x           = intHost $(hashQ "Word32")  <> word32Host x
-encodeIntegralConst TypeWord64{}  x           = intHost $(hashQ "Word64")  <> word64Host x
-encodeIntegralConst TypeCShort{}  (CShort x)  = intHost $(hashQ "CShort")  <> int16Host x
-encodeIntegralConst TypeCUShort{} (CUShort x) = intHost $(hashQ "CUShort") <> word16Host x
-encodeIntegralConst TypeCInt{}    (CInt x)    = intHost $(hashQ "CInt")    <> int32Host x
-encodeIntegralConst TypeCUInt{}   (CUInt x)   = intHost $(hashQ "CUInt")   <> word32Host x
-encodeIntegralConst TypeCLLong{}  (CLLong x)  = intHost $(hashQ "CLLong")  <> int64Host x
-encodeIntegralConst TypeCULLong{} (CULLong x) = intHost $(hashQ "CULLong") <> word64Host x
-encodeIntegralConst TypeCLong{}   (CLong x)   = intHost $(hashQ "CLong")   <> $( case finiteBitSize (undefined::CLong) of
-                                                                                   32 -> [e| int32Host |]
-                                                                                   64 -> [e| int64Host |]
-                                                                                   _  -> error "I don't know what architecture I am" ) x
-encodeIntegralConst TypeCULong{}  (CULong x)  = intHost $(hashQ "CULong")  <> $( case finiteBitSize (undefined::CULong) of
-                                                                                   32 -> [e| word32Host |]
-                                                                                   64 -> [e| word64Host |]
-                                                                                   _  -> error "I don't know what architecture I am" ) x
+encodeIntegralConst TypeInt{}    x = intHost $(hashQ "Int")    <> intHost x
+encodeIntegralConst TypeInt8{}   x = intHost $(hashQ "Int8")   <> int8 x
+encodeIntegralConst TypeInt16{}  x = intHost $(hashQ "Int16")  <> int16Host x
+encodeIntegralConst TypeInt32{}  x = intHost $(hashQ "Int32")  <> int32Host x
+encodeIntegralConst TypeInt64{}  x = intHost $(hashQ "Int64")  <> int64Host x
+encodeIntegralConst TypeWord{}   x = intHost $(hashQ "Word")   <> wordHost x
+encodeIntegralConst TypeWord8{}  x = intHost $(hashQ "Word8")  <> word8 x
+encodeIntegralConst TypeWord16{} x = intHost $(hashQ "Word16") <> word16Host x
+encodeIntegralConst TypeWord32{} x = intHost $(hashQ "Word32") <> word32Host x
+encodeIntegralConst TypeWord64{} x = intHost $(hashQ "Word64") <> word64Host x
 
 {-# INLINE encodeFloatingConst #-}
 encodeFloatingConst :: FloatingType t -> t -> Builder
 encodeFloatingConst TypeHalf{}    (Half (CUShort x)) = intHost $(hashQ "Half")    <> word16Host x
 encodeFloatingConst TypeFloat{}   x                  = intHost $(hashQ "Float")   <> floatHost x
 encodeFloatingConst TypeDouble{}  x                  = intHost $(hashQ "Double")  <> doubleHost x
-encodeFloatingConst TypeCFloat{}  (CFloat x)         = intHost $(hashQ "CFloat")  <> floatHost x
-encodeFloatingConst TypeCDouble{} (CDouble x)        = intHost $(hashQ "CDouble") <> doubleHost x
 
 {-# INLINE encodePrimConst #-}
 encodePrimConst :: PrimConst c -> Builder
@@ -497,12 +468,8 @@ encodeSingleType (NumSingleType t)    = intHost $(hashQ "NumSingleType")    <> e
 encodeSingleType (NonNumSingleType t) = intHost $(hashQ "NonNumSingleType") <> encodeNonNumType t
 
 {-# INLINE encodeVectorType #-}
-encodeVectorType :: VectorType t -> Builder
-encodeVectorType (Vector2Type t)  = intHost $(hashQ "Vector2Type") <> encodeSingleType t
-encodeVectorType (Vector3Type t)  = intHost $(hashQ "Vector3Type") <> encodeSingleType t
-encodeVectorType (Vector4Type t)  = intHost $(hashQ "Vector4Type") <> encodeSingleType t
-encodeVectorType (Vector8Type t)  = intHost $(hashQ "Vector8Type") <> encodeSingleType t
-encodeVectorType (Vector16Type t) = intHost $(hashQ "Vector16Type") <> encodeSingleType t
+encodeVectorType :: VectorType (Vec n t) -> Builder
+encodeVectorType (VectorType n t) = intHost $(hashQ "VectorType") <> intHost n <> encodeSingleType t
 
 {-# INLINE encodeBoundedType #-}
 encodeBoundedType :: BoundedType t -> Builder
@@ -511,11 +478,8 @@ encodeBoundedType (NonNumBoundedType t)   = intHost $(hashQ "NonNumBoundedType")
 
 {-# INLINE encodeNonNumType #-}
 encodeNonNumType :: NonNumType t -> Builder
-encodeNonNumType TypeBool{}   = intHost $(hashQ "Bool")
-encodeNonNumType TypeChar{}   = intHost $(hashQ "Char")
-encodeNonNumType TypeCChar{}  = intHost $(hashQ "CChar")
-encodeNonNumType TypeCSChar{} = intHost $(hashQ "CSChar")
-encodeNonNumType TypeCUChar{} = intHost $(hashQ "CUChar")
+encodeNonNumType TypeBool{} = intHost $(hashQ "Bool")
+encodeNonNumType TypeChar{} = intHost $(hashQ "Char")
 
 {-# INLINE encodeNumType #-}
 encodeNumType :: NumType t -> Builder
@@ -524,30 +488,20 @@ encodeNumType (FloatingNumType t) = intHost $(hashQ "FloatingNumType") <> encode
 
 {-# INLINE encodeIntegralType #-}
 encodeIntegralType :: IntegralType t -> Builder
-encodeIntegralType TypeInt{}     = intHost $(hashQ "Int")
-encodeIntegralType TypeInt8{}    = intHost $(hashQ "Int8")
-encodeIntegralType TypeInt16{}   = intHost $(hashQ "Int16")
-encodeIntegralType TypeInt32{}   = intHost $(hashQ "Int32")
-encodeIntegralType TypeInt64{}   = intHost $(hashQ "Int64")
-encodeIntegralType TypeWord{}    = intHost $(hashQ "Word")
-encodeIntegralType TypeWord8{}   = intHost $(hashQ "Word8")
-encodeIntegralType TypeWord16{}  = intHost $(hashQ "Word16")
-encodeIntegralType TypeWord32{}  = intHost $(hashQ "Word32")
-encodeIntegralType TypeWord64{}  = intHost $(hashQ "Word64")
-encodeIntegralType TypeCShort{}  = intHost $(hashQ "CShort")
-encodeIntegralType TypeCUShort{} = intHost $(hashQ "CUShort")
-encodeIntegralType TypeCInt{}    = intHost $(hashQ "CInt")
-encodeIntegralType TypeCUInt{}   = intHost $(hashQ "CUInt")
-encodeIntegralType TypeCLong{}   = intHost $(hashQ "CLong")
-encodeIntegralType TypeCULong{}  = intHost $(hashQ "CULong")
-encodeIntegralType TypeCLLong{}  = intHost $(hashQ "CLLong")
-encodeIntegralType TypeCULLong{} = intHost $(hashQ "CULLong")
+encodeIntegralType TypeInt{}    = intHost $(hashQ "Int")
+encodeIntegralType TypeInt8{}   = intHost $(hashQ "Int8")
+encodeIntegralType TypeInt16{}  = intHost $(hashQ "Int16")
+encodeIntegralType TypeInt32{}  = intHost $(hashQ "Int32")
+encodeIntegralType TypeInt64{}  = intHost $(hashQ "Int64")
+encodeIntegralType TypeWord{}   = intHost $(hashQ "Word")
+encodeIntegralType TypeWord8{}  = intHost $(hashQ "Word8")
+encodeIntegralType TypeWord16{} = intHost $(hashQ "Word16")
+encodeIntegralType TypeWord32{} = intHost $(hashQ "Word32")
+encodeIntegralType TypeWord64{} = intHost $(hashQ "Word64")
 
 {-# INLINE encodeFloatingType #-}
 encodeFloatingType :: FloatingType t -> Builder
-encodeFloatingType TypeHalf{}    = intHost $(hashQ "Half")
-encodeFloatingType TypeFloat{}   = intHost $(hashQ "Float")
-encodeFloatingType TypeDouble{}  = intHost $(hashQ "Double")
-encodeFloatingType TypeCFloat{}  = intHost $(hashQ "CFloat")
-encodeFloatingType TypeCDouble{} = intHost $(hashQ "CDouble")
+encodeFloatingType TypeHalf{}   = intHost $(hashQ "Half")
+encodeFloatingType TypeFloat{}  = intHost $(hashQ "Float")
+encodeFloatingType TypeDouble{} = intHost $(hashQ "Double")
 
